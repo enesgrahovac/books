@@ -150,3 +150,72 @@ targets = torch.tensor([1,0,1,0],dtype=torch.float32).view(4, 1)
 loss = bce_loss(probabilities,targets)
 print(probabilities)
 print("BCE Loss: ", loss)
+
+'''
+The following example is a toy problem: classifying two-dimensional points
+into one of two classes. This means learning a single line or plane, called
+a decision boundary or hyperplane.
+'''
+
+# Constructing Toy Data 
+import numpy as np
+LEFT_CENTER = (3, 3)
+RIGHT_CENTER = (3, -2)
+def get_toy_data(batch_size, left_center=LEFT_CENTER, right_center=RIGHT_CENTER):
+    x_data = []
+    y_targets = np.zeros(batch_size)
+    for batch_i in range(batch_size):
+        if np.random.random() > 0.5:
+            x_data.append(np.random.normal(loc=left_center))
+        else:
+            x_data.append(np.random.normal(loc=right_center))
+            y_targets[batch_i] = 1
+    return torch.tensor(x_data, dtype=torch.float32), torch.tensor(y_targets, dtype=torch.float32)
+
+print(get_toy_data(50))
+
+# Choosing the Model: Perceptron, for it allows for any input size.
+
+# Choosing the Loss Function: BCE for there are binary classes: stars and circles
+
+# Choosing an optimizer: the hyperparameter is called a learning rate, which controls how much
+# impact the error signla has on updating the weights. PyTorch has many choices for 
+# optimizers. Stochastic Gradient Descent (SGD), is common, but has convergence issues.
+# The current preferred alternative are adaptive optimizers, such as Adagrad or Adam
+
+# Instatiating the Adam Optimizer
+import torch.optim as optim
+
+input_dim = 2
+lr = 0.001
+
+perceptron = Perceptron(input_dim=input_dim)
+bce_loss = nn.BCELoss()
+optimizer = optim.Adam(params=perceptron.parameters(), lr=lr)
+
+batch_size = 1000
+n_epochs = 12
+n_batches = 5
+
+# each epoch is a complete pass over the training data
+for epoch_i in range(n_epochs):
+    # the inner loop is over the batches in the dataset
+    for batch_i in range(n_batches):
+
+        #step 0: Get the data
+        x_data, y_target = get_toy_data(batch_size)
+
+        #step 1: Clear the gradients
+        perceptron.zero_grad()
+
+        #step 2: Compute the forward pass of the model
+        y_pred = perceptron(x_data,apply_sigmoid=True)
+
+        #step 3: Compute the loss value that we wish to optimize
+        loss = bce_loss(y_pred,y_target)
+
+        #step 4: Propogate the loss signal backward
+        loss.backward()
+
+        #step 5: Trigger the optimizer to perform one update
+        optimizer.step()
