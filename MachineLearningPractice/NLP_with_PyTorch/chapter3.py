@@ -237,12 +237,12 @@ import re
 
 # Load Data
 args = Namespace(
-    raw_train_dataset_csv="yelp/raw_train.csv",
-    raw_test_dataset_csv="yelp/raw_test.csv",
+    raw_train_dataset_csv="project_data/yelp/raw_train.csv",
+    raw_test_dataset_csv="project_data/yelp/raw_test.csv",
     train_proportion=0.7,
     val_proportion=0.15,
     test_proportion=0.15,
-    output_munged_csv="yelp/reviews_with_splits_full.csv",
+    output_munged_csv="project_data/yelp/reviews_with_splits_full.csv",
     seed=1337
 )
 train_reviews = pd.read_csv(args.raw_train_dataset_csv, header=None, names=['rating', 'review'])
@@ -341,7 +341,7 @@ class ReviewDataset(Dataset):
         """ returns the vectorizer """
         return self._vectorizer
 
-    def set_split(self, split="train")
+    def set_split(self, split="train"):
         """ selects the splits in the dataset using a solumn in the dataframe
 
         Args:
@@ -370,8 +370,8 @@ class ReviewDataset(Dataset):
         rating_index = \
             self._vectorizer.rating_vocab.lookup_token(row.rating)
         
-        return ('x_data':review_vector,
-                'y_target':rating_index)
+        return {'x_data':review_vector,
+                'y_target':rating_index}
 
     def get_num_batches(self,batch_size):
         """Given a batch size, return the number of batches in the dataset
@@ -382,4 +382,246 @@ class ReviewDataset(Dataset):
             number of batches in the dataset
         """
         return len(self) // batch_size
+
+### In this example, the tokens will be words
+
+### The Vocabulary class below will manage token to integer mapping for the rest of the ML pipeline.
+
+class Vocabulary(object):
+    """ Class to process text and extract Vocabulary for mapping """
+
+    def __init__(self, token_to_idx=None, add_unk=True, unk_token="<UNK>"):
+        """
+        Args:
+            token_to_idx (dict): a pre-existing map of tokens to indices
+            add_unk (book): a flag that indicates whether to add the UNK token
+            unk_token (attr): the UNK token to add into the vocabulary
+        """
+
+        if token_to_idx is None:
+            token_to_idx = []
+        self._token_to_idx = token_to_idx
+
+        self._idx_to_token = {idx: token for token,idx in self._token_to_idx.items()}
+
+        self._add_unk = add_unk
+        self._unk_token = unk_token
+
+        self.unk_index = -1
+        if add_unk:
+            self.unk_index = self.add_token(unk_token)
+
+    def to_serializable(self):
+        """ returns a dictionary that can be serialized """
+        return {
+            'token_to_idx':self._token_to_idx,
+            'add_unk':self._add_unk,
+            'unk_token':self._unk_token
+        }
+    @classmethod
+    def from_serializable(cls, contents):
+        """ instantiates the Vocabulary from a serialized dictionary """
+        return cls(**contents)
+
+    def add_token(self, token):
+        """ Update mapping dicts based on the token
+        Args:
+            token (str): the item to add into the Vocabulary
+        Returns:
+            index (int): the integer corresponding to the token
+        """
+        if token in self._token_to_idx:
+            index = self._token_to_idx[token]
+        else:
+            index = len(self._token_to_idx)
+            self._token_to_idx[token] = index
+            self._idx_to_token[index] = token
+        return index
+
+    def lookup_token(self,token):
+        """ Retrieve the index associated with the token
+            or the UNK index if token isn't present.
+
+        Args:
+            token (str): the token to look up
+        Returns: 
+            index (int): the index corresponding to the token
+        Notes:
+            `unk_index` needs to be >=0 (having been added into the Vocabulary) 
+            for the UNK functionality)   
+        """
+        if self._add_unk:
+            return self._token_to_idx.get(token, self.unk_index)
+        else:
+            return self._token_to_idx[token]
+        
+    def lookup_index(self, index):
+        """ Return the token associated with the index
+
+        Args:
+            index (int): the index to look up
+        Returns:
+            token (str): the token corresponding to the index
+        Raises:
+            KeyError: if the index is not in the Vocabulary
+        """
+        
+        if index not in self._idx_to_token:
+            raise KeyError("the index (%d) is not in the Vocabulary".format(index))
+        return self._idx_to_token[index]
     
+    def __str__(self):
+        return "<Vocabulary(size=%d)>".format(len(self))
+    
+    def __len__(self):
+        return len(self._token_to_idx)
+
+""" The next step is to have a Vectorizer that takes the integer form of the
+    tokens and outputs a vector of the data points. The Vector should be
+    the same length between each input.
+
+    The Vectorizer uses a one-hot approach that returns a vector with the same length as
+    the vocab and has a one for each word that is present. It discards the order of the 
+    words.
+"""
+
+class ReviewVectorizer(object):
+    """ The Vectorizer which coordinates the Vocabularies and puts them to use"""
+    def __init__(self,review_vocab, rating_vocab):
+        """
+        Args:
+            review_vocab (Vocabulary): maps words to integers
+            rating_vocab (Vocabulary): maps class labels to integers
+        """
+        self.review_vocab = review_vocab
+        self.rating_vocab = rating_vocab
+
+    def vectorize(self,review):
+        """ Create a collapsed one-hot vector for the review
+
+        Args:
+            review (str): the review
+        Returns:
+            one_hot (np.ndarray): the collapsed one-hot encoding
+        """
+        one_hot = np.zeroes(len(self.review_vocab),dtype=np.float32)
+
+        for token in review.split(" "):
+            if token not in string.punctuation:
+                one_hot[self.review_vocab.lookup_token(token)] = 1
+        
+        return one_hot
+    
+    @classmethod
+    def from_dataframe(cls, review_df, cutoff=25):
+        """ Instantiate the vectorizer from the dataset dataframe
+
+        Args:
+            review_df (pandas.DataFrame): the review dataset
+            cutoff (int): the parameter for frequency-based filtering
+        Returns:
+            an instance of the ReviewVectorizer
+        """
+        review_vocab = Vocabulary(add_unk=True)
+        rating_vocab = Vocabulary(add_unk=False)
+
+        #Add ratings
+        for rating in sorted(set(review_df.rating)):
+            rating_vocab.add_token(rating)
+        
+        # Add top words if count > provided count
+        word_counts = Counter() # part of collections library
+        for review in review_df.review:
+            for word in review.split(" "):
+                if word not in string.punctuation:
+                    word_counts[word] += 1
+        
+        for word, count in word_counts.items():
+            if count > cuttoff:
+                review_vocab.add_token(word)
+        
+        return cls(review_vocab, rating_vocab)
+
+    def to_serializable(self):
+        """ Create the serializable dictionary for caching
+
+        Returns:
+            contents (dict): the serializable dictionary
+        """
+        return {
+            'review_vocab': self.review_vocab.to_serializable(),
+            'rating_vocab': self.rating_vocab.to_serializable()
+        }
+
+"""
+    The final step of the text-to-vectorized minibatch pipeline is to 
+    group the vectorized data points.
+
+    Grouping into minibatches is a vital part of training neural networks.
+
+    PyTorch provides the DataLoader class for coordinating the process.
+
+"""
+
+def generate_batches(dataset, batch_size, shuffle=True, drop_last=True, device="cpu"):
+    """ A generator functino which wraps the PyTorch DataLoader. It will ensure
+        each tensor is on the write device location.
+    """
+    dataloader = DataLoader(dataset=dataset, batch_size=batch_size,
+                            shuffle=shuffle, drop_last=drop_last)
+    
+    for data_dict in dataloader:
+        out_data_dict = {}
+        for name, tensor in data_dict.items():
+            out_data_dict[name] = data_dict[name].to(device)
+        yield out_data_dict
+    
+class ReviewClassifier(nn.Module):
+    """ A perceptron is one linear layer"""
+    def __init__(self, num_features):
+        """
+        Args:
+            input_dim (int): size of the input features
+        """
+        super(ReviewClassifier, self).__init__()
+        self.fc1 = nn.Linear(in_features=num_features, out_features=1)
+
+    def forward(self, x_in), apply_sigmoid=False:
+        """ The forward pass of the perceptron
+        Args: 
+            x_in (torch.Tensor): an input data tensor
+                x_in.shape should be (batch, num_features)
+            Returns:
+                the resulting tensor. tensor.shape should be (batch,).
+        """
+        y_out = self.fc1(x_in).squeeze()
+        if apply_sigmoid:
+            y_out = F.sigmoid(y_out)
+        return y_out # the activation function used here is the sigmoid function
+
+""" The Training Routine
+
+    Outline of the components of the training routine and how they come together
+    with the dataset and model to adjust the model parameters and increase its performance.
+"""
+
+from argparse import Namespace
+
+args = Namespace(
+    #Data and path information
+    frequency_cutoff=25,
+    model_state_file='model.pth',
+    review_csv='project_data/yelp/reviews_with_splits_lite.csv',
+    save_dir='model_storage/ch3/yelp/',
+    vectorizer_file='vectorizer.json',
+    # No Model Hyperparameters
+    # Training hyperparameters
+    batch_size = 128,
+    early_stopping_criteria=5,
+    learning_rate=0.001,
+    num_epochs=100,
+    seed=1337,
+    # Runtime options omitted for space
+)
+
+### Setting the stage for training to begin
