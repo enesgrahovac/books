@@ -72,11 +72,9 @@ Interpretability:
 
 '''
 References:
-
 https://medium.com/apprentice-journal/pca-application-in-machine-learning-4827c07a61db
 
 https://pytorch.org/docs/stable/generated/torch.pca_lowrank.html
 
 https://towardsdatascience.com/pca-using-python-scikit-learn-e653f8989e60
-
 '''

@@ -101,9 +101,9 @@ Softmax gives a discrete probability distribution over k possible classes.
 softmax = nn.Softmax(dim=1)
 x_input = torch.randn(1,3)
 y_output = softmax(x_input)
-print(x_input)
-print(y_output)
-print(torch.sum(y_output,dim=1))
+# print(x_input)
+# print(y_output)
+# print(torch.sum(y_output,dim=1))
 
 ### Below are commonly used Loss Functions
 
@@ -123,7 +123,7 @@ mse_loss = nn.MSELoss()
 outputs = torch.randn(3,5, requires_grad=True)
 targets = torch.randn(3,5)
 loss = mse_loss(outputs, targets)
-print("Mean Squared Error Loss: ",loss)
+# print("Mean Squared Error Loss: ",loss)
 
 '''
 Categotical Cross-Entropy Loss
@@ -135,7 +135,7 @@ ce_loss = nn.CrossEntropyLoss()
 outputs = torch.randn(3,5,requires_grad=True)
 targets = torch.tensor([1,0,3],dtype=torch.int64)
 loss = ce_loss(outputs,targets)
-print("Cross Entropy Loss: ",loss)
+# print("Cross Entropy Loss: ",loss)
 
 '''
 Binary Cross-Entropy Loss (BCE loss)
@@ -148,8 +148,8 @@ sigmoid = nn.Sigmoid()
 probabilities = sigmoid(torch.randn(4,1,requires_grad=True))
 targets = torch.tensor([1,0,1,0],dtype=torch.float32).view(4, 1)
 loss = bce_loss(probabilities,targets)
-print(probabilities)
-print("BCE Loss: ", loss)
+# print(probabilities)
+# print("BCE Loss: ", loss)
 
 '''
 The following example is a toy problem: classifying two-dimensional points
@@ -172,7 +172,7 @@ def get_toy_data(batch_size, left_center=LEFT_CENTER, right_center=RIGHT_CENTER)
             y_targets[batch_i] = 1
     return torch.tensor(x_data, dtype=torch.float32), torch.tensor(y_targets, dtype=torch.float32)
 
-print(get_toy_data(50))
+# print(get_toy_data(50))
 
 # Choosing the Model: Perceptron, for it allows for any input size.
 
@@ -237,12 +237,12 @@ import re
 
 # Load Data
 args = Namespace(
-    raw_train_dataset_csv="project_data/yelp/raw_train.csv",
-    raw_test_dataset_csv="project_data/yelp/raw_test.csv",
+    raw_train_dataset_csv="./project_data/yelp/raw_train.csv",
+    raw_test_dataset_csv="./project_data/yelp/raw_test.csv",
     train_proportion=0.7,
     val_proportion=0.15,
     test_proportion=0.15,
-    output_munged_csv="project_data/yelp/reviews_with_splits_full.csv",
+    output_munged_csv="./project_data/yelp/reviews_with_splits_full.csv",
     seed=1337
 )
 train_reviews = pd.read_csv(args.raw_train_dataset_csv, header=None, names=['rating', 'review'])
@@ -291,9 +291,10 @@ def preprocess_text(text):
 
 final_reviews.review = final_reviews.review.apply(preprocess_text)
 
-print(final_reviews.head())
+# print(final_reviews.head())
 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
+import string
 
 ### A PyTorch Dataset class for the Yelp Review Dataset
 
@@ -362,7 +363,7 @@ class ReviewDataset(Dataset):
         Returns:
             a dict of the data point's features (x_data) and label (y_targets)
         """
-        row = self.__target_df.iloc[index]
+        row = self._target_df.iloc[index]
 
         review_vector = \
             self._vectorizer.vectorize(row.review)
@@ -399,7 +400,7 @@ class Vocabulary(object):
         """
 
         if token_to_idx is None:
-            token_to_idx = []
+            token_to_idx = {}
         self._token_to_idx = token_to_idx
 
         self._idx_to_token = {idx: token for token,idx in self._token_to_idx.items()}
@@ -504,7 +505,7 @@ class ReviewVectorizer(object):
         Returns:
             one_hot (np.ndarray): the collapsed one-hot encoding
         """
-        one_hot = np.zeroes(len(self.review_vocab),dtype=np.float32)
+        one_hot = np.zeros(len(self.review_vocab),dtype=np.float32)
 
         for token in review.split(" "):
             if token not in string.punctuation:
@@ -530,14 +531,14 @@ class ReviewVectorizer(object):
             rating_vocab.add_token(rating)
         
         # Add top words if count > provided count
-        word_counts = Counter() # part of collections library
+        word_counts = collections.Counter() # part of collections library
         for review in review_df.review:
             for word in review.split(" "):
                 if word not in string.punctuation:
                     word_counts[word] += 1
         
         for word, count in word_counts.items():
-            if count > cuttoff:
+            if count > cutoff:
                 review_vocab.add_token(word)
         
         return cls(review_vocab, rating_vocab)
@@ -569,7 +570,7 @@ def generate_batches(dataset, batch_size, shuffle=True, drop_last=True, device="
     """
     dataloader = DataLoader(dataset=dataset, batch_size=batch_size,
                             shuffle=shuffle, drop_last=drop_last)
-    
+
     for data_dict in dataloader:
         out_data_dict = {}
         for name, tensor in data_dict.items():
@@ -586,7 +587,7 @@ class ReviewClassifier(nn.Module):
         super(ReviewClassifier, self).__init__()
         self.fc1 = nn.Linear(in_features=num_features, out_features=1)
 
-    def forward(self, x_in), apply_sigmoid=False:
+    def forward(self, x_in, apply_sigmoid=False):
         """ The forward pass of the perceptron
         Args: 
             x_in (torch.Tensor): an input data tensor
@@ -624,4 +625,178 @@ args = Namespace(
     # Runtime options omitted for space
 )
 
-### Setting the stage for training to begin
+### Instantiating the dataset, model, loss, optimizer, and training state
+import torch.optim as optim
+
+def make_train_state(args):
+    return {
+        'epoch_index': 0,
+        'train_loss': [],
+        'train_acc': [],
+        'val_loss': [],
+        'val_acc': [],
+        'test_loss': [],
+        'test_acc': []
+    }
+
+def update_train_state(args, model, train_state):
+    """Handle the training state updates.
+
+    Components:
+     - Early Stopping: Prevent overfitting.
+     - Model Checkpoint: Model is saved if the model is better
+
+    :param args: main arguments
+    :param model: model to train
+    :param train_state: a dictionary representing the training state values
+    :returns:
+        a new train_state
+    """
+
+    # Save one model at least
+    if train_state['epoch_index'] == 0:
+        torch.save(model.state_dict(), train_state['model_filename'])
+        train_state['stop_early'] = False
+
+    # Save model if performance improved
+    elif train_state['epoch_index'] >= 1:
+        loss_tm1, loss_t = train_state['val_loss'][-2:]
+
+        # If loss worsened
+        if loss_t >= train_state['early_stopping_best_val']:
+            # Update step
+            train_state['early_stopping_step'] += 1
+        # Loss decreased
+        else:
+            # Save the best model
+            if loss_t < train_state['early_stopping_best_val']:
+                torch.save(model.state_dict(), train_state['model_filename'])
+
+            # Reset early stopping step
+            train_state['early_stopping_step'] = 0
+
+        # Stop early ?
+        train_state['stop_early'] = \
+            train_state['early_stopping_step'] >= args.early_stopping_criteria
+
+    return train_state
+
+def compute_accuracy(y_pred, y_target):
+    y_target = y_target.cpu()
+    y_pred_indices = (torch.sigmoid(y_pred)>0.5).cpu().long()#.max(dim=1)[1]
+    n_correct = torch.eq(y_pred_indices, y_target).sum().item()
+    return n_correct / len(y_pred_indices) * 100
+
+train_state = make_train_state(args)
+
+if not torch.cuda.is_available():
+    args.cuda = False
+
+args.device = torch.device("cuda" if args.cuda else "cpu")
+
+# dataset and vectorizer
+dataset = ReviewDataset.load_dataset_and_make_vectorizer(args.review_csv)
+vectorizer = dataset.get_vectorizer()
+
+# model
+classifier = ReviewClassifier(num_features=len(vectorizer.review_vocab))
+classifier = classifier.to(args.device)
+
+# loss and optimizer
+loss_func = nn.BCEWithLogitsLoss()
+optimizer = optim.Adam(classifier.parameters(), lr=args.learning_rate)
+
+### The Training Loop
+for epoch_index in range(args.num_epochs):
+    train_state['epoch_index'] = epoch_index
+
+    # Iterate over training dataset
+
+    # setup: batch generator, set loss and acc to 0, set train mode on
+    dataset.set_split('train')
+    batch_generator = generate_batches(dataset,batch_size=args.batch_size,device=args.device)
+    running_loss = 0.0
+    running_acc = 0.0
+    classifier.train()
+
+    for batch_index, batch_dict in enumerate(batch_generator):
+        # The training routine in 5 steps:
+
+        # step 1. zero the gradients
+        optimizer.zero_grad()
+
+        # step 2. compute the output
+        y_pred = classifier(x_in=batch_dict['x_data'].float())
+
+        # step 3. compute the output
+        loss = loss_func(y_pred, batch_dict['y_target'].float())
+        loss_batch = loss.item()
+        running_loss += (loss_batch - running_loss) / (batch_index + 1)
+
+        # step 4. use loss to produce gradients
+        loss.backward()
+
+        # step 5. use optimizer to take gradient step
+        optimizer.step()
+
+        # ------------------------------------
+        # Compute the accuracy
+        acc_batch = compute_accuracy(y_pred, batch_dict['y_target'])
+        running_acc += (acc_batch - running_acc) / (batch_index + 1)
+    
+    train_state['train_loss'].append(running_loss)
+    train_state['train_acc'].append(running_acc)
+
+    #Iterate over val dataset
+
+    # setup: batch generator, set loss and acc to -, set eval mode on
+    dataset.set_split('val')
+    batch_generator = generate_batches(dataset, batch_size=args.batch_size,device=args.device)
+    running_loss = 0.
+    running_acc = 0.
+    classifier.eval()
+
+    for batch_index, batch_dict in enumerate(batch_generator):
+
+        #step 1. Compute the output
+        y_pred = classifier(x_in=batch_dict["x_data"].float())
+
+        # Step 2. compute the loss
+        loss = loss_func(y_pred, batch_dict['y_target'].float())
+        loss_batch = loss.item()
+        running_loss += (loss_batch - running_loss) / (batch_index + 1)
+
+        # Step 3. compute the accuracy
+        acc_batch = compute_accuracy(y_pred, batch_dict['y_target'])
+        running_acc += (acc_batch - running_acc) / (batch_index  + 1)
+
+    train_state['val_loss'].append(running_loss)
+    train_state['val_acc'].append(running_acc)
+
+### Test the model
+dataset.set_split('test')
+batch_generator = generate_batches(dataset,batch_size=args.batch_size,device=args.device)
+running_loss = 0.0
+running_acc = 0.0
+classifier.train()
+
+for batch_index, batch_dict in enumerate(batch_generator):
+
+    # compute the output
+    y_pred = classifier(x_in=batch_dict['x_data'].float())
+
+    # compute the loss
+    loss = loss_func(y_pred, batch_dict['y_target'].float())
+    loss_batch = loss.item()
+    running_loss += (loss_batch - running_loss) / (batch_index + 1)
+
+    # Compute the accuracy
+    acc_batch = compute_accuracy(y_pred, batch_dict['y_target'])
+    running_acc += (acc_batch - running_acc) / (batch_index + 1)
+
+train_state['test_loss'].append(running_loss)
+train_state['test_acc'].append(running_acc)
+
+print(train_state['test_loss'])
+print(train_state['test_acc'])
+
